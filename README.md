@@ -1,45 +1,47 @@
-# مرجع (Marja) - وكيل يجاوب من مستنداتك مع ذكر المصدر
+# Rafeeq - a document-grounded AI agent with citations
 
-وكيل ذكاء اصطناعي يبحث في مجموعة مستندات (Markdown/نص) ويجاوب **فقط** مما وجده فيها، ويذكر مصدر كل معلومة،
-ويرفض إذا ما لقي دليل. مبني على OpenRouter بنماذج مجانية.
+Rafeeq answers questions **only** from a folder of documents (Markdown/text), cites the passage behind every
+answer, and refuses when the documents don't contain the answer. It runs on free models through OpenRouter.
 
-## كيف يشتغل
+## How it works
 ```
-سؤال -> الوكيل يستدعي search_docs -> BM25 يرجع أفضل المقاطع -> الحارس يعزل المقاطع المشبوهة
-     -> النموذج يكتب الإجابة مع [id] -> التحقق: كل مصدر لازم يكون من المقاطع المسترجعة، وإلا رفض
+question -> agent calls search_docs -> BM25 returns the best passages -> guard quarantines suspicious ones
+         -> model writes an answer with [id] citations -> validator: every citation must come from the
+            retrieved passages, otherwise the answer becomes a refusal
 ```
 
-| الملف | وظيفته |
+| File | Purpose |
 |---|---|
-| `marja/retrieval.py` | تقطيع المستندات حسب العناوين + BM25 مع تطبيع عربي (تشكيل، همزات، "ال") |
-| `marja/guard.py` | كشف حقن الأوامر داخل المستندات + تغليف النص كبيانات |
-| `marja/agent.py` | حلقة الوكيل بالأداة، بدائل النماذج، التحقق من الاستشهادات والرفض |
-| `eval/` | مهام تقييم + مشغّل مؤتمت (يرجع رمز فشل للـ CI) |
-| `tests/` | اختبارات بدون إنترنت بعميل وهمي |
+| `rafeeq/retrieval.py` | Heading-aware chunking + BM25 ranking with light stemming |
+| `rafeeq/guard.py` | Prompt-injection detection; retrieved text is wrapped as data |
+| `rafeeq/agent.py` | Tool-calling loop, model fallbacks, citation validation, refusals |
+| `eval/` | Evaluation tasks and an automated runner (non-zero exit on failure, CI-friendly) |
+| `tests/` | Offline unit tests using a fake model client |
 
-## التشغيل
+## Run it
 ```bash
 pip install -r requirements.txt
-export OPENROUTER_API_KEY=...        # مفتاح مجاني من openrouter.ai
-python cli.py -q "كم غرامة التأخير؟"
+export OPENROUTER_API_KEY=...          # free key from openrouter.ai
+python cli.py -q "What is the late fine?"
 ```
-اختياري: `export MARJA_MODELS="model1,model2"` لتغيير النموذج وترتيب البدائل.
+Optional: `export RAFEEQ_MODELS="model1,model2"` to change the model and fallback order.
 
-## التقييم والاختبار
+## Evaluate and test
 ```bash
-python eval/run_eval.py --retrieval-only   # بدون إنترنت
-python eval/run_eval.py                    # الوكيل الكامل
+python eval/run_eval.py --retrieval-only   # offline
+python eval/run_eval.py                    # full agent
 python -m unittest discover tests
 ```
-أنواع المهام: **answerable** (لازم يستشهد بالمقطع الصحيح)، **unanswerable** (لازم يرفض)،
-**injection** (لازم ما يتأثر بتعليمات مخبأة في مستند).
+Task types: **answerable** (must cite the right passage), **unanswerable** (must refuse),
+**injection** (must not be influenced by instructions hidden inside a document).
 
-## خصّصه لمجالك (مهم)
-1. احذف `docs/` التجريبية وحط مستنداتك الحقيقية (`.md` أو `.txt`، العناوين `#` و`##` تصير حدود المقاطع).
-2. عدّل `eval/tasks.json` بأسئلة من مستنداتك: كل سؤال له `expect_contains` (نص لازم يظهر في المقطع الصحيح).
-3. أضف مقطع مسموم في أحد مستنداتك، وحدّث `poisoned_contains` في مهمة الحقن.
+## Make it yours
+1. Replace the sample files in `docs/` with your own documents (`#`/`##` headings become passage boundaries).
+2. Rewrite `eval/tasks.json` with questions about your documents. `expect_contains` is text that must appear in the correct passage.
+3. Hide a malicious instruction in one of your documents and point `poisoned_contains` at it.
 
-## حدود معروفة (اكتبها في تقريرك)
-- BM25 يعتمد على تطابق الكلمات، فلا يفهم المرادفات. الترقية الطبيعية: embeddings أو دمج الاثنين.
-- الحارس يعتمد على أنماط (regex)، فيعزل المقطع كامل حتى لو فيه معلومة صحيحة، ولا يغطي كل صيغ الحقن.
-- نماذج OpenRouter المجانية عليها حدود معدل، وبعضها ضعيف في استدعاء الأدوات: لذلك فيه بدائل نماذج.
+## Known limitations
+- BM25 matches words, not meaning, so synonyms can be missed. Natural upgrade: embeddings or hybrid search.
+- The guard is pattern-based: it quarantines the whole passage (even useful text in it) and won't catch every injection phrasing.
+- Free OpenRouter models are rate-limited and some handle tool calling poorly, hence the fallback list.
+- Retrieval stemming is English-only.
